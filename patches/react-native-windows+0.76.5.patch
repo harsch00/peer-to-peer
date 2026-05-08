@@ -1,0 +1,13 @@
+diff --git a/node_modules/react-native-windows/PropertySheets/External/Microsoft.ReactNative.Uwp.CSharpLib.targets b/node_modules/react-native-windows/PropertySheets/External/Microsoft.ReactNative.Uwp.CSharpLib.targets
+index 0000000..0000000 100644
+--- a/node_modules/react-native-windows/PropertySheets/External/Microsoft.ReactNative.Uwp.CSharpLib.targets
++++ b/node_modules/react-native-windows/PropertySheets/External/Microsoft.ReactNative.Uwp.CSharpLib.targets
+@@ -21,7 +21,7 @@
+   <Import Project="$(ReactNativeWindowsDir)PropertySheets\External\Microsoft.ReactNative.CSharp.PackageReferences.props" Condition="$(UseExperimentalNuget)" />
+ 
+   <ItemGroup>
+-    <PackageReference Include="Microsoft.NETCore.UniversalWindowsPlatform" Version="$(NETCoreUWPVersion)" />
++    <PackageReference Include="Microsoft.NETCore.UniversalWindowsPlatform" Version="$(NETCoreUWPVersion)" Condition="'$(ReactNativeUwpModuleHasOwnNetCoreUwp)' != 'true'" />
+     <!-- WinUI package name and version are set by WinUI.props -->
+     <PackageReference Include="$(WinUIPackageName)" Version="$(WinUIPackageVersion)" Condition="'$(OverrideWinUIPackage)'!='true'" />
+   </ItemGroup>

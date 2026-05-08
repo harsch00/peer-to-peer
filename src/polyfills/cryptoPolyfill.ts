@@ -2,11 +2,11 @@
  * Cross-platform crypto.getRandomValues polyfill.
  *
  *  • Android / iOS: react-native-get-random-values (native).
- *  • Windows:       NativeModules.P3PRandom (Windows.Security.Cryptography).
+ *  • Windows:       NativeModules.P2PRandom (Windows.Security.Cryptography).
  *  • Fallback:      Math.random based stub so the app boots even when no
  *                   native source is available; not cryptographically strong.
  */
-import {NativeModules, Platform} from 'react-native';
+import {NativeModules, Platform, TurboModuleRegistry} from 'react-native';
 
 type GetRandomValuesFn = <T extends ArrayBufferView | null>(arr: T) => T;
 
@@ -50,7 +50,11 @@ function installJsFallback(): void {
 }
 
 function installWindowsNative(): boolean {
-  const native: any = (NativeModules as any).P3PRandom;
+  const native: any =
+    (NativeModules as any).P2PRandom ??
+    (NativeModules as any).P3PRandom ??
+    TurboModuleRegistry.get('P2PRandom') ??
+    TurboModuleRegistry.get('P3PRandom');
   if (!native || typeof native.getRandomBytes !== 'function') {
     return false;
   }

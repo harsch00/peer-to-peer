@@ -11,8 +11,17 @@ import {
   PeerIdentity,
 } from '../core/crypto/identity';
 import type {AvatarStyle} from '../utils/dicebear';
+import {maybeMesh} from '../core/mesh/meshSingleton';
 
 const STORAGE_KEY = 'p2pmesh.profile.v1';
+
+function announceProfileToMesh(profile: LocalProfile) {
+  const n = maybeMesh();
+  if (!n) {
+    return;
+  }
+  void n.broadcastPeerProfile(profile.displayName, profile.avatarStyle);
+}
 
 export interface LocalProfile {
   identity: PeerIdentity;
@@ -94,6 +103,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
     };
     await persist(profile);
     set({profile});
+    announceProfileToMesh(profile);
   },
 
   setAvatarStyle: async avatarStyle => {
@@ -101,6 +111,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
     const profile = {...current, avatarStyle};
     await persist(profile);
     set({profile});
+    announceProfileToMesh(profile);
   },
 
   regenerateIdentity: async () => {
@@ -113,6 +124,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
     };
     await persist(profile);
     set({hydrated: true, profile});
+    announceProfileToMesh(profile);
     return profile;
   },
 }));

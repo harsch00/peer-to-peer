@@ -65,4 +65,4 @@ export const FluentTokens = {
   },
 } as const;
 
-export type FluentPalette = typeof FluentTokens.light;
+export type FluentPalette = typeof FluentTokens.light | typeof FluentTokens.dark;

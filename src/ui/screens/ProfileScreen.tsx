@@ -47,7 +47,7 @@ export function ProfileScreen() {
           Profile is loading…
         </Text>
         <Text style={{color: theme.colors.textMuted, fontFamily: theme.fontFamily, marginTop: 8, textAlign: 'center'}}>
-          If this stays visible, the local crypto polyfill failed to install. Check Diagnostics for "P3PRandom" or
+          If this stays visible, the local crypto polyfill failed to install. Check Diagnostics for "P2PRandom" or
           "crypto.getRandomValues" entries.
         </Text>
         <Pressable

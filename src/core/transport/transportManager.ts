@@ -64,4 +64,8 @@ export class TransportManager {
   list() {
     return this.transports.map(t => ({id: t.id, name: t.displayName}));
   }
+
+  getById(id: TransportId): MeshTransport | undefined {
+    return this.transports.find(t => t.id === id);
+  }
 }

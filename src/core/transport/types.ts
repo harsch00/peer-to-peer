@@ -40,4 +40,8 @@ export interface MeshTransport {
   /** Broadcast on every active link maintained by this transport. */
   broadcast(bytes: Uint8Array, exceptLinkId?: string): Promise<void>;
   links(): PeerLink[];
+  /**
+   * Optional: run a one-shot radio/discovery probe and return human-readable lines for the UI.
+   */
+  runDiscoveryDiagnostics?: () => Promise<string[]>;
 }

@@ -38,7 +38,7 @@ are routed through a Bitchat-style gossip mesh secured by the Noise Protocol.
 * **`BleTransport`** — `react-native-ble-plx` based, Bitchat service UUIDs,
   graceful degradation on platforms without BT.
 * **`WifiDirectTransport`** — Android Wi-Fi P2P / Windows Wi-Fi Aware adapter
-  via a thin `NativeModules.P3PWifiDirect` bridge.
+  via a thin `NativeModules.P2PWifiDirect` bridge.
 * **`NostrTransport`** — internet "carrier wave" using NIP-01 events on
   `wss://relay.damus.io`, `wss://nos.lol`, and `wss://relay.snort.social`.
 * **`SimulatorTransport`** — synthesizes peers, RSSI jitter, and link churn so

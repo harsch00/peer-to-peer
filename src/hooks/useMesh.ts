@@ -2,7 +2,8 @@
  * Stable, lazy access to the singleton MeshNode.
  */
 import {useEffect, useState} from 'react';
-import {bootstrapMesh, maybeMesh} from '../core/mesh/bootstrap';
+import {bootstrapMesh} from '../core/mesh/bootstrap';
+import {maybeMesh} from '../core/mesh/meshSingleton';
 import type {MeshNode} from '../core/mesh/meshNode';
 
 export function useMesh(): MeshNode | null {

@@ -14,6 +14,8 @@ import {RootNavigator} from './src/navigation/RootNavigator';
 import {StatusBar, useColorScheme} from 'react-native';
 import {useProfileStore} from './src/state/profileStore';
 import {usePeersStore} from './src/state/peersStore';
+import {usePeerDirectoryStore} from './src/state/peerDirectoryStore';
+import {setupMeshLocalNotifications} from './src/notifications/meshLocalNotify';
 
 export default function App() {
   const scheme = useColorScheme() ?? 'dark';
@@ -23,6 +25,11 @@ export default function App() {
       .hydrate()
       .then(profile => usePeersStore.getState().setIdentity(profile.identity))
       .catch(() => undefined);
+    usePeerDirectoryStore
+      .getState()
+      .hydrate()
+      .catch(() => undefined);
+    void setupMeshLocalNotifications();
   }, []);
 
   return (

@@ -23,7 +23,8 @@ export class WifiDirectTransport implements MeshTransport {
 
   async start(events: TransportEvents): Promise<void> {
     this.events = events;
-    this.nativeModule = NativeModules.P3PWifiDirect ?? null;
+    this.nativeModule =
+      (NativeModules as any).P2PWifiDirect ?? (NativeModules as any).P3PWifiDirect ?? null;
     if (!this.nativeModule) {
       diag('warn', 'WIFI_DIRECT_NATIVE_MODULE_MISSING');
       return;

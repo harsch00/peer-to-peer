@@ -32,10 +32,16 @@ import {
 } from '../protocol/messageEnvelope';
 import {TransportManager} from '../transport/transportManager';
 import type {PeerLink} from '../transport/types';
+import {usePeerDirectoryStore} from '../../state/peerDirectoryStore';
 
 /** Map a remote static public key to the canonical 8-byte peer ID. */
 function peerIdFromPublicKey(pk: Uint8Array): string {
   return bytesToHex(sha256(pk).slice(0, 8));
+}
+
+export interface MessageReaction {
+  emoji: string;
+  fromPeerId: string;
 }
 
 export interface ChatMessage {
@@ -49,6 +55,10 @@ export interface ChatMessage {
   latencyMs: number;
   path: string[];
   delivered: boolean;
+  /** Aggregated on clients — not sent as a standalone chat row. */
+  reactions?: MessageReaction[];
+  /** Poll option id per voting peer (from `poll_vote` payloads), latest wins. */
+  pollVotes?: Record<string, string>;
 }
 
 export interface DiagEvent {
@@ -121,6 +131,17 @@ export class MeshNode {
     this.diag('info', 'NODE_STOPPED');
   }
 
+  /**
+   * Run a one-shot BLE discovery diagnostic (Pulse screen). Delegates to BLE transport when present.
+   */
+  async runBleDiscoveryProbe(): Promise<string[]> {
+    const ble = this.transport.getById('ble');
+    if (ble?.runDiscoveryDiagnostics) {
+      return ble.runDiscoveryDiagnostics();
+    }
+    return ['BLE transport is not registered in this build.'];
+  }
+
   // ---------- public API ----------
 
   async sendChatMessage(toPeerId: string, body: string): Promise<ChatMessage> {
@@ -173,7 +194,10 @@ export class MeshNode {
       flags: PacketFlag.SIGNED,
     });
     this.gossip.emit(packet);
-    // Also surface in our local UI so the sender sees their own broadcast.
+    // Profile beacons are not chat rows — skip local echo.
+    if (payload.kind === 'peer_profile') {
+      return;
+    }
     const msg: ChatMessage = {
       id: packet.packetId,
       fromPeerId: this.identity.peerId,
@@ -187,6 +211,15 @@ export class MeshNode {
       delivered: true,
     };
     this.emitter.emit('message', msg);
+  }
+
+  /** Announce display name + avatar style on the mesh broadcast channel (signed gossip). */
+  async broadcastPeerProfile(displayName: string, avatarStyle: string): Promise<void> {
+    await this.sendBroadcastPayload({
+      kind: 'peer_profile',
+      displayName: displayName.trim().slice(0, 64),
+      avatarStyle,
+    });
   }
 
   on(event: 'message', cb: Listener<ChatMessage>): () => void;
@@ -383,6 +416,14 @@ export class MeshNode {
     stored.forEach(p => this.transport.broadcast(encodePacket(p)));
   }
 
+  private applyPeerProfile(senderId: string, payload: ChatPayload): boolean {
+    if (payload.kind !== 'peer_profile') {
+      return false;
+    }
+    usePeerDirectoryStore.getState().upsert(senderId, payload.displayName, payload.avatarStyle);
+    return true;
+  }
+
   private handleDelivered(d: DeliveredPacket) {
     const {packet} = d;
     if (packet.type === PacketType.ENCRYPTED_MSG) {
@@ -397,6 +438,9 @@ export class MeshNode {
           packet.payload,
         );
         const payload = decodeMessagePayload(plain);
+        if (this.applyPeerProfile(packet.senderId, payload)) {
+          return;
+        }
         const msg: ChatMessage = {
           id: packet.packetId,
           fromPeerId: packet.senderId,
@@ -418,6 +462,9 @@ export class MeshNode {
       }
     } else if (packet.type === PacketType.GOSSIP_BROADCAST) {
       const payload = decodeMessagePayload(packet.payload);
+      if (this.applyPeerProfile(packet.senderId, payload)) {
+        return;
+      }
       const msg: ChatMessage = {
         id: packet.packetId,
         fromPeerId: packet.senderId,

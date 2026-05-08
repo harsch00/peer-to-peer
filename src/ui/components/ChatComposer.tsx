@@ -1,18 +1,52 @@
 /**
- * Composer field with a Fluent / M3 styled send button.
+ * Composer field with Fluent / M3 styling, attachments, and poll entry (poll UI lives in parent overlay).
  */
 import React, {useCallback, useState} from 'react';
-import {Platform, Pressable, StyleSheet, Text, TextInput, View} from 'react-native';
+import {Alert, Platform, Pressable, StyleSheet, Text, TextInput, View} from 'react-native';
 import {useTheme} from '../theme/ThemeProvider';
 import type {ChatPayload} from '../../core/protocol/messageEnvelope';
+import {pickAttachment} from '../../utils/pickAttachment';
 
 interface Props {
   onSend: (body: string) => Promise<void> | void;
   onSendPayload?: (payload: ChatPayload) => Promise<void> | void;
+  /** Opens the poll sheet (must not use Modal on RN Windows). Parent renders `PollBuilderOverlay`. */
+  onOpenPoll?: () => void;
   placeholder?: string;
 }
 
-export function ChatComposer({onSend, onSendPayload, placeholder = 'Type a message…'}: Props) {
+const MAX_INLINE_ATTACHMENT_BYTES = 180 * 1024;
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  const btoaFn = (globalThis as unknown as {btoa?: (s: string) => string}).btoa;
+  if (typeof btoaFn === 'function') {
+    return btoaFn(binary);
+  }
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const {Buffer} = require('buffer');
+  return Buffer.from(bytes).toString('base64');
+}
+
+async function readInlineAttachmentBase64(uri: string): Promise<string | undefined> {
+  try {
+    const res = await fetch(uri);
+    if (!res.ok) return undefined;
+    const ab = await res.arrayBuffer();
+    const bytes = new Uint8Array(ab);
+    if (bytes.byteLength === 0 || bytes.byteLength > MAX_INLINE_ATTACHMENT_BYTES) {
+      return undefined;
+    }
+    return bytesToBase64(bytes);
+  } catch {
+    return undefined;
+  }
+}
+
+export function ChatComposer({onSend, onSendPayload, onOpenPoll, placeholder = 'Type a message…'}: Props) {
   const theme = useTheme();
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
@@ -35,7 +69,6 @@ export function ChatComposer({onSend, onSendPayload, placeholder = 'Type a messa
       setSending(true);
       try {
         await onSendPayload(payload);
-        setText('');
       } finally {
         setSending(false);
       }
@@ -43,28 +76,57 @@ export function ChatComposer({onSend, onSendPayload, placeholder = 'Type a messa
     [onSendPayload, sending],
   );
 
-  const attachmentName = text.trim() || 'Untitled attachment';
-  const pollParts = text.split('|').map(p => p.trim()).filter(Boolean);
-  const pollQuestion = pollParts[0] || 'Quick poll';
-  const pollOptions = pollParts.length >= 3 ? pollParts.slice(1) : ['Yes', 'No'];
+  const browseAndSend = useCallback(
+    async (kind: 'image' | 'video' | 'document') => {
+      if (!onSendPayload || sending) return;
+      try {
+        const file = await pickAttachment(kind);
+        if (!file) return;
+        const dataBase64 = await readInlineAttachmentBase64(file.uri);
+        if (!dataBase64) {
+          Alert.alert(
+            'Attachment is large',
+            'This file exceeds inline mesh limits; sending metadata only. Pick smaller media for reliable cross-device transfer.',
+          );
+        }
+        await sendPayload({
+          kind: 'attachment',
+          attachmentType: kind === 'document' ? 'document' : kind,
+          name: file.name,
+          uri: file.uri,
+          dataBase64,
+          sizeBytes: file.sizeBytes,
+          mimeType: file.mimeType,
+        });
+      } catch (e) {
+        Alert.alert('Attachment', e instanceof Error ? e.message : 'Could not read file');
+      }
+    },
+    [onSendPayload, sending, sendPayload],
+  );
 
   return (
     <View style={{backgroundColor: theme.colors.surface, borderTopColor: theme.colors.border, borderTopWidth: 0.5}}>
       <View style={styles.actions}>
-        <Action label="Image" disabled={!onSendPayload || sending} onPress={() => sendPayload({kind: 'attachment', attachmentType: 'image', name: attachmentName})} />
-        <Action label="Video" disabled={!onSendPayload || sending} onPress={() => sendPayload({kind: 'attachment', attachmentType: 'video', name: attachmentName})} />
-        <Action label="Doc" disabled={!onSendPayload || sending} onPress={() => sendPayload({kind: 'attachment', attachmentType: 'document', name: attachmentName})} />
+        <Action
+          label="Image"
+          disabled={!onSendPayload || sending}
+          onPress={() => browseAndSend('image')}
+        />
+        <Action
+          label="Video"
+          disabled={!onSendPayload || sending}
+          onPress={() => browseAndSend('video')}
+        />
+        <Action
+          label="Doc"
+          disabled={!onSendPayload || sending}
+          onPress={() => browseAndSend('document')}
+        />
         <Action
           label="Poll"
-          disabled={!onSendPayload || sending}
-          onPress={() =>
-            sendPayload({
-              kind: 'poll',
-              pollId: `${Date.now()}`,
-              question: pollQuestion,
-              options: pollOptions.map((option, index) => ({id: String(index + 1), text: option})),
-            })
-          }
+          disabled={!onSendPayload || sending || !onOpenPoll}
+          onPress={() => onOpenPoll?.()}
         />
       </View>
       <View style={styles.row}>

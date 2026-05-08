@@ -9,10 +9,18 @@ import App from './App';
 import {name as appName} from './app.json';
 import {bootstrapMesh} from './src/core/mesh/bootstrap';
 
+try {
+  // Notifee warns if no background handler is registered.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const notifee = require('@notifee/react-native').default;
+  notifee.onBackgroundEvent(async () => {
+    // No-op: app currently has no action buttons/background tasks.
+  });
+} catch {
+  // Notifee optional per-platform dependency.
+}
+
 AppRegistry.registerComponent(appName, () => App);
-// Temporary compatibility alias in case Metro/device cache still requests
-// the older app key from previous builds.
-AppRegistry.registerComponent('p3pmesh', () => App);
 
 // Bootstrap async after registration so startup errors never block
 // AppRegistry from mounting the root component.

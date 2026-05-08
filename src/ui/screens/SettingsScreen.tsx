@@ -1,9 +1,10 @@
 /**
  * Transport / preference settings.
  */
-import React, {useState} from 'react';
-import {ScrollView, StyleSheet, Switch, Text, View} from 'react-native';
+import React, {useEffect, useState} from 'react';
+import {Alert, ScrollView, StyleSheet, Switch, Text, View} from 'react-native';
 import {useTheme} from '../theme/ThemeProvider';
+import {getAllowNostrGateway, setAllowNostrGateway} from '../../state/meshPrefs';
 
 interface ToggleProps {
   label: string;
@@ -42,6 +43,65 @@ function Toggle({label, description, initial = true}: ToggleProps) {
   );
 }
 
+function NostrGatewayToggle() {
+  const theme = useTheme();
+  const [v, setV] = useState(false);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const initial = await getAllowNostrGateway();
+      if (!cancelled) {
+        setV(initial);
+        setReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!ready) {
+    return null;
+  }
+
+  return (
+    <View
+      style={[
+        styles.toggleRow,
+        {
+          backgroundColor: theme.colors.surface,
+          borderColor: theme.colors.border,
+          borderRadius: theme.platform === 'android' ? 24 : 10,
+        },
+      ]}>
+      <View style={{flex: 1, paddingRight: 12}}>
+        <Text style={{color: theme.colors.text, fontFamily: theme.fontFamily, fontWeight: '600'}}>
+          Nostr Internet Relay
+        </Text>
+        <Text style={{color: theme.colors.textMuted, fontFamily: theme.fontFamily, fontSize: 12, marginTop: 2}}>
+          Use public Nostr relays over the internet when no local peers are reachable. Off by default — restart the app
+          after changing this.
+        </Text>
+      </View>
+      <Switch
+        value={v}
+        onValueChange={async next => {
+          setV(next);
+          await setAllowNostrGateway(next);
+          Alert.alert(
+            next ? 'Internet gateway enabled' : 'Internet gateway disabled',
+            'Fully quit and reopen the app so the mesh stack can use the new transport list.',
+          );
+        }}
+        trackColor={{true: theme.colors.accent, false: theme.colors.surfaceAlt}}
+        thumbColor="#fff"
+      />
+    </View>
+  );
+}
+
 export function SettingsScreen() {
   const theme = useTheme();
   return (
@@ -65,10 +125,7 @@ export function SettingsScreen() {
           label="Wi-Fi Direct"
           description="High-bandwidth peer-to-peer fallback when on the same Wi-Fi P2P group."
         />
-        <Toggle
-          label="Nostr Internet Relay"
-          description="Use public Nostr relays as a global gateway when internet is available."
-        />
+        <NostrGatewayToggle />
         <Toggle
           label="Mesh Simulator"
           description="Spawn synthetic peers for development. Disable in production."

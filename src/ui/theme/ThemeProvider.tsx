@@ -4,7 +4,7 @@
  */
 import React, {createContext, useContext, useMemo} from 'react';
 import {Platform, useColorScheme} from 'react-native';
-import {FluentTokens} from './fluentTheme';
+import {FluentTokens, type FluentPalette} from './fluentTheme';
 import {M3Defaults, M3Palette, resolveM3Palette} from './m3Theme';
 import {Radii, Spacing} from './tokens';
 
@@ -13,7 +13,7 @@ export type Scheme = 'light' | 'dark';
 interface UnifiedTheme {
   platform: 'windows' | 'android' | 'other';
   scheme: Scheme;
-  fluent: typeof FluentTokens.light;
+  fluent: FluentPalette;
   m3: M3Palette;
   fontFamily: string;
   fontFamilyMono: string;

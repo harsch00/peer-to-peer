@@ -39,7 +39,11 @@ const ACircle = Animated.createAnimatedComponent(Circle);
 const ALine = Animated.createAnimatedComponent(Line);
 
 interface RadarSlot {
-  link: PeerLink;
+  /** Stable id for React keys only — do not pass live `PeerLink` into Reanimated worklets
+   * (RSSI / handshake fields mutate on the JS object and trigger shareable warnings). */
+  linkId: string;
+  reliability: number;
+  rssi: number;
   angle: number;
   radius: number;
   hops: number;
@@ -90,7 +94,9 @@ export function MeshRadarView({size = 320}: {size?: number}) {
   const slots = useMemo<RadarSlot[]>(() => {
     const n = Math.max(1, peers.length);
     return peers.map((link, i) => ({
-      link,
+      linkId: link.linkId,
+      reliability: link.reliability,
+      rssi: link.rssi,
       angle: (i / n) * Math.PI * 2 + (i * 0.13),
       radius: rssiToDistance(link.rssi),
       hops: inferHops(link),
@@ -134,7 +140,7 @@ export function MeshRadarView({size = 320}: {size?: number}) {
 
         {slots.map(slot => (
           <PeerEdge
-            key={`edge-${slot.link.linkId}`}
+            key={`edge-${slot.linkId}`}
             cx={cx}
             cy={cy}
             maxR={maxR}
@@ -145,7 +151,7 @@ export function MeshRadarView({size = 320}: {size?: number}) {
 
         {slots.map(slot => (
           <PeerNode
-            key={`node-${slot.link.linkId}`}
+            key={`node-${slot.linkId}`}
             cx={cx}
             cy={cy}
             maxR={maxR}
@@ -186,7 +192,7 @@ function PeerEdge({
   slot: RadarSlot;
   sweep: SharedValue<number>;
 }) {
-  const color = colorForHops(slot.hops, slot.link.rssi);
+  const color = colorForHops(slot.hops, slot.rssi);
   const animatedProps = useAnimatedProps(() => {
     const t = sweep.value * Math.PI * 2;
     const drift = Math.sin(t * slot.freq + slot.phase) * 0.04;
@@ -198,7 +204,7 @@ function PeerEdge({
       y1: cy,
       x2: px,
       y2: py,
-      strokeOpacity: 0.4 + slot.link.reliability * 0.45,
+      strokeOpacity: 0.4 + slot.reliability * 0.45,
     } as any;
   });
   return (
@@ -224,7 +230,7 @@ function PeerNode({
   slot: RadarSlot;
   sweep: SharedValue<number>;
 }) {
-  const color = colorForHops(slot.hops, slot.link.rssi);
+  const color = colorForHops(slot.hops, slot.rssi);
   const animatedProps = useAnimatedProps(() => {
     const t = sweep.value * Math.PI * 2;
     const drift = Math.sin(t * slot.freq + slot.phase) * 0.04;
