@@ -33,8 +33,8 @@ export default function App() {
   }, []);
 
   return (
-    <GestureHandlerRootView style={{flex: 1}}>
-      <SafeAreaProvider>
+    <GestureHandlerRootView style={{flex: 1, backgroundColor: 'transparent'}}>
+      <SafeAreaProvider style={{backgroundColor: 'transparent'}}>
         <ThemeProvider>
           <StatusBar barStyle={scheme === 'dark' ? 'light-content' : 'dark-content'} />
           <RootNavigator />

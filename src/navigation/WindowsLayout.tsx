@@ -56,6 +56,10 @@ export function WindowsLayout() {
 
   const railDragOrigin = useSharedValue(240);
 
+  const handleEnd = (compact: boolean) => {
+    setRailCompact(compact);
+  };
+
   const toggleRail = useCallback(() => {
     const timing = {
       duration: 280,
@@ -84,7 +88,7 @@ export function WindowsLayout() {
       );
     })
     .onEnd(() => {
-      runOnJS(setRailCompact)(railW.value <= RAIL_MIN + 8);
+      runOnJS(handleEnd)(railW.value <= RAIL_MIN + 8);
     });
 
   return (
@@ -97,8 +101,8 @@ export function WindowsLayout() {
               style={({pressed}) => [
                 styles.collapseButton,
                 {
-                  borderColor: theme.colors.border,
-                  backgroundColor: theme.fluent.bgFillTertiary,
+                  borderColor: theme.fluent.glassBorderSubtle,
+                  backgroundColor: theme.fluent.acrylicCard,
                   opacity: pressed ? 0.85 : 1,
                 },
               ]}>
@@ -152,13 +156,21 @@ export function WindowsLayout() {
       </Animated.View>
 
       <GestureDetector gesture={railPan}>
-        <View
+        <Animated.View
+          collapsable={false}
           style={[
             styles.resizeStrip,
-            {backgroundColor: theme.colors.border},
             Platform.OS === 'windows' && ({cursor: 'ew-resize' as never}),
-          ]}
-        />
+          ]}>
+          <View
+            style={{
+              width: 1,
+              height: '100%',
+              backgroundColor: theme.fluent.glassBorderSubtle,
+              opacity: 0.55,
+            }}
+          />
+        </Animated.View>
       </GestureDetector>
 
       <MicaBackground variant="mica" style={styles.body}>
@@ -208,9 +220,16 @@ function RailItem({
           backgroundColor: active
             ? theme.colors.accentSoft
             : elevated
-              ? theme.fluent.bgFillTertiary
+              ? theme.fluent.hoverReveal
               : 'transparent',
           opacity: pressed ? 0.88 : 1,
+          ...(elevated && !active ? {
+            borderWidth: StyleSheet.hairlineWidth,
+            borderColor: theme.fluent.glassBorderSubtle,
+          } : {
+            borderWidth: StyleSheet.hairlineWidth,
+            borderColor: 'transparent',
+          }),
         },
       ]}>
       <View
@@ -328,9 +347,12 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   resizeStrip: {
-    width: 4,
+    width: 12,
+    marginHorizontal: -6,
     alignSelf: 'stretch',
-    opacity: 0.55,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 99,
   },
   body: {flex: 1},
 });

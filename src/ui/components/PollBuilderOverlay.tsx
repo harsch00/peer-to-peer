@@ -49,7 +49,13 @@ export function PollBuilderOverlay({visible, onClose, onSubmit}: Props) {
       pointerEvents="box-none"
       accessibilityViewIsModal={Platform.OS !== 'windows'}>
       <Pressable
-        style={[StyleSheet.absoluteFillObject, {backgroundColor: 'rgba(0,0,0,0.45)'}]}
+        style={[
+          StyleSheet.absoluteFillObject,
+          {
+            backgroundColor:
+              Platform.OS === 'windows' ? 'rgba(0,0,0,0.32)' : 'rgba(0,0,0,0.45)',
+          },
+        ]}
         onPress={onClose}
         accessibilityLabel="Dismiss poll editor"
       />
@@ -57,7 +63,16 @@ export function PollBuilderOverlay({visible, onClose, onSubmit}: Props) {
         <View
           style={[
             styles.modalCard,
-            {backgroundColor: theme.colors.surface, borderColor: theme.colors.border},
+            {
+              backgroundColor:
+                theme.platform === 'windows'
+                  ? theme.fluent.acrylicOverlay
+                  : theme.colors.surface,
+              borderColor:
+                theme.platform === 'windows'
+                  ? theme.fluent.glassBorder
+                  : theme.colors.border,
+            },
           ]}>
           <Text style={[styles.modalTitle, {color: theme.colors.text, fontFamily: theme.fontFamily}]}>
             New poll

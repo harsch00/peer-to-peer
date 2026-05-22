@@ -98,6 +98,27 @@ export class BleTransport implements MeshTransport {
   /** WinRT BLE (react-native-windows); see `windows/p2pmesh/P2PMeshBleModule.cpp`. */
   private winBle: P2PMeshBleNative | null = null;
   private winBleEmitterSubs: Array<{remove: () => void}> = [];
+  private rxBuffers = new Map<string, Uint8Array>();
+
+  private handleIncomingBleChunk(linkId: string, chunk: Uint8Array) {
+    const existing = this.rxBuffers.get(linkId) || new Uint8Array(0);
+    let buf = new Uint8Array(existing.length + chunk.length);
+    buf.set(existing);
+    buf.set(chunk, existing.length);
+
+    while (buf.length >= 4) {
+      const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+      const packetLen = view.getUint32(0, false);
+      if (buf.length >= 4 + packetLen) {
+        const packet = buf.slice(4, 4 + packetLen);
+        this.events?.onPacket(linkId, packet);
+        buf = buf.slice(4 + packetLen);
+      } else {
+        break;
+      }
+    }
+    this.rxBuffers.set(linkId, buf);
+  }
 
   async start(events: TransportEvents): Promise<void> {
     this.events = events;
@@ -234,6 +255,7 @@ export class BleTransport implements MeshTransport {
       this.linkAnnounced.delete(linkId);
     }
     this.linkMap.delete(linkId);
+    this.rxBuffers.delete(linkId);
   }
 
   private async connectWindowsMesh(device: {[k: string]: any}, linkId: string) {
@@ -259,7 +281,7 @@ export class BleTransport implements MeshTransport {
           return;
         }
         const bytes = base64ToBytes(e.value);
-        this.events?.onPacket(linkId, bytes);
+        this.handleIncomingBleChunk(linkId, bytes);
       });
       this.managerSubs.set(linkId, sub);
       setInterval(async () => {
@@ -286,6 +308,7 @@ export class BleTransport implements MeshTransport {
           this.linkAnnounced.delete(linkId);
         }
         this.linkMap.delete(linkId);
+        this.rxBuffers.delete(linkId);
       }
     }
   }
@@ -551,7 +574,7 @@ export class BleTransport implements MeshTransport {
         (e: {linkId?: string; payloadB64?: string}) => {
           if (!e?.payloadB64 || !e.linkId) return;
           const bytes = base64ToBytes(e.payloadB64);
-          this.events?.onPacket(e.linkId, bytes);
+          this.handleIncomingBleChunk(e.linkId, bytes);
         },
       ),
     );
@@ -587,6 +610,7 @@ export class BleTransport implements MeshTransport {
           this.events?.onLinkDown(link);
           this.linkMap.delete(e.linkId);
         }
+        this.rxBuffers.delete(e.linkId);
       }),
     );
   }
@@ -612,7 +636,7 @@ export class BleTransport implements MeshTransport {
         (err: unknown, ch: any) => {
           if (err || !ch?.value) return;
           const bytes = base64ToBytes(ch.value);
-          this.events?.onPacket(linkId, bytes);
+          this.handleIncomingBleChunk(linkId, bytes);
         },
       );
       this.managerSubs.set(linkId, sub);
@@ -641,6 +665,7 @@ export class BleTransport implements MeshTransport {
           this.linkAnnounced.delete(linkId);
         }
         this.linkMap.delete(linkId);
+        this.rxBuffers.delete(linkId);
       }
     }
   }
@@ -703,11 +728,17 @@ export class BleTransport implements MeshTransport {
     }
     this.manager = null;
     this.linkMap.clear();
+    this.rxBuffers.clear();
   }
 
   async send(linkId: string, bytes: Uint8Array): Promise<void> {
     const idNoPrefix = linkId.replace(/^ble:/i, '').toUpperCase();
     const mod = getAndroidBleMeshPeripheral();
+
+    // Frame the packet with a 4-byte length header
+    const framed = new Uint8Array(4 + bytes.length);
+    new DataView(framed.buffer, framed.byteOffset, framed.byteLength).setUint32(0, bytes.length, false);
+    framed.set(bytes, 4);
 
     const useNotify =
       Platform.OS === 'android' &&
@@ -716,24 +747,24 @@ export class BleTransport implements MeshTransport {
       !this.outboundLinks.has(linkId);
 
     if (useNotify) {
-      for (let off = 0; off < bytes.length; off += MTU_BYTES) {
-        const slice = bytes.slice(off, off + MTU_BYTES);
+      for (let off = 0; off < framed.length; off += MTU_BYTES) {
+        const slice = framed.slice(off, off + MTU_BYTES);
         await mod.notifyCentral(idNoPrefix, bytesToBase64(slice));
       }
       return;
     }
 
     if (Platform.OS === 'windows' && this.winBle) {
-      for (let off = 0; off < bytes.length; off += MTU_BYTES) {
-        const slice = bytes.slice(off, off + MTU_BYTES);
+      for (let off = 0; off < framed.length; off += MTU_BYTES) {
+        const slice = framed.slice(off, off + MTU_BYTES);
         await this.winBle.writeRx(idNoPrefix, BLE_SERVICE_UUID, BLE_RX_CHAR_UUID, bytesToBase64(slice));
       }
       return;
     }
 
     if (!this.manager) return;
-    for (let off = 0; off < bytes.length; off += MTU_BYTES) {
-      const slice = bytes.slice(off, off + MTU_BYTES);
+    for (let off = 0; off < framed.length; off += MTU_BYTES) {
+      const slice = framed.slice(off, off + MTU_BYTES);
       await this.manager.writeCharacteristicWithoutResponseForDevice(
         idNoPrefix,
         BLE_SERVICE_UUID,

@@ -6,7 +6,7 @@
   "scripts": {
     "postinstall": "patch-package",
     "android": "react-native run-android",
-    "windows": "set _CL_=/FS&& npx @react-native-community/cli run-windows --buildLogDirectory windows\\\\buildlogs --singleproc",
+    "windows": "set PreferredToolArchitecture=x64&& set _CL_=/FS&& npx @react-native-community/cli run-windows --buildLogDirectory windows\\\\buildlogs --singleproc",
     "start": "react-native start",
     "lint": "eslint . --ext .ts,.tsx",
     "test": "jest",

@@ -13,7 +13,22 @@ export type ChatPayload =
   | {kind: 'poll'; pollId: string; question: string; options: Array<{id: string; text: string}>}
   | {kind: 'poll_vote'; pollId: string; optionId: string}
   /** Gossip-only: announces display name + DiceBear style to the mesh. */
-  | {kind: 'peer_profile'; displayName: string; avatarStyle: string};
+  | {kind: 'peer_profile'; displayName: string; avatarStyle: string}
+  /** Chunked file transfer — header packet. */
+  | {
+      kind: 'file_transfer_header';
+      transferId: string;
+      fileName: string;
+      fileSize: number;
+      mimeType?: string;
+      totalChunks: number;
+      checksum: string;
+      attachmentType: 'image' | 'video' | 'document';
+    }
+  /** Chunked file transfer — data chunk. */
+  | {kind: 'file_transfer_chunk'; transferId: string; chunkIndex: number; data: string}
+  /** Chunked file transfer — receiver ACK. */
+  | {kind: 'file_transfer_complete'; transferId: string};
 
 export interface MessageEnvelope {
   version: 1;
@@ -43,7 +58,10 @@ export function decodeMessagePayload(bytes: Uint8Array): ChatPayload {
       }
       return p;
     }
-  } catch {
+  } catch (e) {
+    if (text.includes('"version":1') && text.includes('"payload":')) {
+      return {kind: 'text', text: `[Corrupted packet dropped: ${String(e)}]`};
+    }
     // Backward compatibility for old plaintext messages.
   }
   return {kind: 'text', text};
@@ -63,5 +81,11 @@ export function payloadPreview(payload: ChatPayload): string {
       return `[vote] ${payload.optionId}`;
     case 'peer_profile':
       return payload.displayName;
+    case 'file_transfer_header':
+      return `[sending ${payload.attachmentType}] ${payload.fileName}`;
+    case 'file_transfer_chunk':
+      return `[chunk ${payload.chunkIndex}]`;
+    case 'file_transfer_complete':
+      return `[transfer complete]`;
   }
 }

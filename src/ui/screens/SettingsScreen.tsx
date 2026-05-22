@@ -2,7 +2,7 @@
  * Transport / preference settings.
  */
 import React, {useEffect, useState} from 'react';
-import {Alert, ScrollView, StyleSheet, Switch, Text, View} from 'react-native';
+import {Alert, Platform, ScrollView, StyleSheet, Switch, Text, View} from 'react-native';
 import {useTheme} from '../theme/ThemeProvider';
 import {getAllowNostrGateway, setAllowNostrGateway} from '../../state/meshPrefs';
 
@@ -20,9 +20,9 @@ function Toggle({label, description, initial = true}: ToggleProps) {
       style={[
         styles.toggleRow,
         {
-          backgroundColor: theme.colors.surface,
-          borderColor: theme.colors.border,
-          borderRadius: theme.platform === 'android' ? 24 : 10,
+          backgroundColor: theme.platform === 'windows' ? theme.fluent.acrylicCard : theme.colors.surface,
+          borderColor: theme.platform === 'windows' ? theme.fluent.glassBorderSubtle : theme.colors.border,
+          borderRadius: theme.platform === 'android' ? 24 : 8,
         },
       ]}>
       <View style={{flex: 1, paddingRight: 12}}>
@@ -71,9 +71,9 @@ function NostrGatewayToggle() {
       style={[
         styles.toggleRow,
         {
-          backgroundColor: theme.colors.surface,
-          borderColor: theme.colors.border,
-          borderRadius: theme.platform === 'android' ? 24 : 10,
+          backgroundColor: theme.platform === 'windows' ? theme.fluent.acrylicCard : theme.colors.surface,
+          borderColor: theme.platform === 'windows' ? theme.fluent.glassBorderSubtle : theme.colors.border,
+          borderRadius: theme.platform === 'android' ? 24 : 8,
         },
       ]}>
       <View style={{flex: 1, paddingRight: 12}}>

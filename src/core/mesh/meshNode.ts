@@ -24,6 +24,7 @@ import {
   encodePacket,
   newPacketId,
 } from '../protocol/packet';
+import {bytesToBase64} from '../protocol/fileTransfer';
 import {
   ChatPayload,
   decodeMessagePayload,
@@ -33,6 +34,11 @@ import {
 import {TransportManager} from '../transport/transportManager';
 import type {PeerLink} from '../transport/types';
 import {usePeerDirectoryStore} from '../../state/peerDirectoryStore';
+import {
+  sendFileChunked,
+  handleInboundHeader,
+  handleInboundChunk,
+} from './fileTransferManager';
 
 /** Map a remote static public key to the canonical 8-byte peer ID. */
 function peerIdFromPublicKey(pk: Uint8Array): string {
@@ -146,6 +152,57 @@ export class MeshNode {
 
   async sendChatMessage(toPeerId: string, body: string): Promise<ChatMessage> {
     return this.sendChatPayload(toPeerId, {kind: 'text', text: body});
+  }
+
+  /**
+   * Send a large file as a chunked transfer. The file is split into 32 KiB
+   * chunks and sent sequentially via the mesh. Progress is tracked in the
+   * fileTransferStore.
+   */
+  async sendFile(
+    toPeerId: string,
+    fileBytes: Uint8Array,
+    fileName: string,
+    mimeType: string,
+    attachmentType: 'image' | 'video' | 'document',
+  ): Promise<string> {
+    const isBroadcast = toPeerId === ZERO_PEER;
+    const transferId = await sendFileChunked({
+      toPeerId,
+      fileBytes,
+      fileName,
+      mimeType,
+      attachmentType,
+      sendPayload: async (to, payload) => {
+        await this.sendChatPayload(to, payload);
+      },
+      isBroadcast,
+      sendBroadcastPayload: async (payload) => {
+        await this.sendBroadcastPayload(payload);
+      },
+    });
+
+    const resultBase64 = bytesToBase64(fileBytes);
+    const msg: ChatMessage = {
+      id: `ft-out-complete-${transferId}`,
+      fromPeerId: this.identity.peerId,
+      toPeerId,
+      body: `[${attachmentType}] ${fileName}`,
+      payload: {
+        kind: 'attachment',
+        attachmentType,
+        name: fileName,
+        dataBase64: resultBase64,
+        mimeType,
+      },
+      receivedAtMs: Date.now(),
+      hopCount: 0,
+      latencyMs: 0,
+      path: [this.identity.peerId],
+      delivered: true,
+    };
+    this.emitter.emit('message', msg);
+    return transferId;
   }
 
   async sendChatPayload(toPeerId: string, payload: ChatPayload): Promise<ChatMessage> {
@@ -424,6 +481,66 @@ export class MeshNode {
     return true;
   }
 
+  /**
+   * Route inbound file transfer payloads to the FileTransferManager.
+   * Returns true if the payload was consumed (should not be emitted as a
+   * normal chat message).
+   */
+  private handleFileTransferPayload(
+    senderId: string,
+    payload: ChatPayload,
+    d: DeliveredPacket,
+  ): boolean {
+    if (payload.kind === 'file_transfer_header') {
+      handleInboundHeader(senderId, payload);
+      // Emit header as a chat message so the UI can show progress
+      const msg: ChatMessage = {
+        id: d.packet.packetId,
+        fromPeerId: senderId,
+        toPeerId: d.packet.recipientId,
+        body: payloadPreview(payload),
+        payload,
+        receivedAtMs: d.receivedAtMs,
+        hopCount: d.hopCount,
+        latencyMs: d.latencyMs,
+        path: d.packet.path,
+        delivered: true,
+      };
+      this.emitter.emit('message', msg);
+      return true;
+    }
+    if (payload.kind === 'file_transfer_chunk') {
+      const result = handleInboundChunk(payload);
+      if (result.complete && result.base64) {
+        // Emit a synthetic attachment message for the completed transfer
+        const msg: ChatMessage = {
+          id: `ft-complete-${result.transferId}`,
+          fromPeerId: senderId,
+          toPeerId: d.packet.recipientId,
+          body: `[${result.attachmentType}] ${result.fileName}`,
+          payload: {
+            kind: 'attachment',
+            attachmentType: result.attachmentType ?? 'document',
+            name: result.fileName ?? 'file',
+            dataBase64: result.base64,
+            mimeType: result.mimeType,
+          },
+          receivedAtMs: Date.now(),
+          hopCount: d.hopCount,
+          latencyMs: d.latencyMs,
+          path: d.packet.path,
+          delivered: true,
+        };
+        this.emitter.emit('message', msg);
+      }
+      return true; // chunks are always consumed silently
+    }
+    if (payload.kind === 'file_transfer_complete') {
+      return true; // ACK — consumed
+    }
+    return false;
+  }
+
   private handleDelivered(d: DeliveredPacket) {
     const {packet} = d;
     if (packet.type === PacketType.ENCRYPTED_MSG) {
@@ -439,6 +556,9 @@ export class MeshNode {
         );
         const payload = decodeMessagePayload(plain);
         if (this.applyPeerProfile(packet.senderId, payload)) {
+          return;
+        }
+        if (this.handleFileTransferPayload(packet.senderId, payload, d)) {
           return;
         }
         const msg: ChatMessage = {
@@ -463,6 +583,9 @@ export class MeshNode {
     } else if (packet.type === PacketType.GOSSIP_BROADCAST) {
       const payload = decodeMessagePayload(packet.payload);
       if (this.applyPeerProfile(packet.senderId, payload)) {
+        return;
+      }
+      if (this.handleFileTransferPayload(packet.senderId, payload, d)) {
         return;
       }
       const msg: ChatMessage = {

@@ -15,7 +15,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import Animated, {runOnJS, SlideInRight, useSharedValue} from 'react-native-reanimated';
+import Animated, {runOnJS, SlideInRight, useSharedValue, useAnimatedStyle, type SharedValue} from 'react-native-reanimated';
 import {Gesture, GestureDetector} from 'react-native-gesture-handler';
 import {useTheme} from '../theme/ThemeProvider';
 import {usePeersStore} from '../../state/peersStore';
@@ -30,6 +30,7 @@ import {PollBuilderOverlay} from '../components/PollBuilderOverlay';
 import {maybeMesh} from '../../core/mesh/meshSingleton';
 import type {PeerLink} from '../../core/transport/types';
 import type {ChatPayload} from '../../core/protocol/messageEnvelope';
+import {ZERO_PEER} from '../../core/protocol/packet';
 
 type ConversationKey = string; // peerId or BROADCAST_KEY
 
@@ -126,10 +127,25 @@ export function ChatsRoute({
     );
   };
 
+  const handleResizeEnd = (w: number) => {
+    if (onResizeListWidth) {
+      onResizeListWidth(w);
+    }
+  };
+
+  const listW = useSharedValue(listWidth ?? 320);
+  useEffect(() => {
+    if (listWidth !== undefined) listW.value = listWidth;
+  }, [listWidth, listW]);
+
+  const listAnimStyle = useAnimatedStyle(() => ({
+    width: listW.value,
+  }));
+
   if (layout === 'windows') {
     return (
       <View style={styles.row}>
-        <View style={[styles.list, {borderRightColor: theme.colors.border, borderRightWidth: 1, width: listWidth}]}>
+        <Animated.View style={[styles.list, {borderRightColor: theme.colors.border, borderRightWidth: 1}, listAnimStyle]}>
           <ConversationList
             conversations={conversations}
             activeKey={active}
@@ -137,11 +153,11 @@ export function ChatsRoute({
             onSelect={setActive}
             onRequestClearConversation={confirmAndClearConversation}
           />
-        </View>
+        </Animated.View>
         {onResizeListWidth ? (
           <PaneResizeHandle
-            listWidth={listWidth}
-            onResizeListWidth={onResizeListWidth}
+            listW={listW}
+            onResizeEnd={handleResizeEnd}
           />
         ) : null}
         <View style={styles.activePane}>
@@ -178,18 +194,14 @@ export function ChatsRoute({
 }
 
 function PaneResizeHandle({
-  listWidth,
-  onResizeListWidth,
+  listW,
+  onResizeEnd,
 }: {
-  listWidth: number;
-  onResizeListWidth: (w: number) => void;
+  listW: SharedValue<number>;
+  onResizeEnd: (w: number) => void;
 }) {
   const theme = useTheme();
-  const origin = useSharedValue(listWidth);
-  const listW = useSharedValue(listWidth);
-  useEffect(() => {
-    listW.value = listWidth;
-  }, [listWidth, listW]);
+  const origin = useSharedValue(0);
 
   const pan = Gesture.Pan()
     .activeOffsetX([-10, 10])
@@ -201,20 +213,31 @@ function PaneResizeHandle({
         WIN_LIST_MAX,
         Math.max(WIN_LIST_MIN, origin.value + e.translationX),
       );
-      runOnJS(onResizeListWidth)(Math.round(next));
+      listW.value = next;
+    })
+    .onEnd(() => {
+      runOnJS(onResizeEnd)(Math.round(listW.value));
     });
 
   return (
     <GestureDetector gesture={pan}>
-      <View
+      <Animated.View
+        collapsable={false}
         style={[
           styles.resizeCol,
           {
-            backgroundColor: theme.colors.border,
             ...(Platform.OS === 'windows' ? {cursor: 'ew-resize' as never} : {}),
           },
-        ]}
-      />
+        ]}>
+        <View
+          style={{
+            width: 1,
+            height: '100%',
+            backgroundColor: theme.colors.border,
+            opacity: 0.55,
+          }}
+        />
+      </Animated.View>
     </GestureDetector>
   );
 }
@@ -249,12 +272,27 @@ function ConversationList({
         Conversations
       </Text>
       {conversations.map(c => (
-        <View key={c.key} style={[styles.convoRowOuter, {marginHorizontal: 6}]}>
+        <View key={c.key} style={[styles.convoRowOuter, {marginHorizontal: 6, position: 'relative'}]}>
+          {activeKey === c.key && (
+            <View
+              style={{
+                position: 'absolute',
+                left: 0,
+                top: 10,
+                bottom: 10,
+                width: 3,
+                borderRadius: 1.5,
+                backgroundColor: theme.colors.accent,
+                zIndex: 10,
+              }}
+            />
+          )}
           <Pressable
             onPress={() => onSelect(c.key)}
             style={(state: {pressed?: boolean; hovered?: boolean}) => {
               const hovered = !!state.hovered;
               const pressed = !!state.pressed;
+              const isWin = theme.platform === 'windows';
               return [
                 styles.convoRowMain,
                 {
@@ -262,10 +300,14 @@ function ConversationList({
                     activeKey === c.key
                       ? theme.colors.accentSoft
                       : hovered
-                        ? theme.colors.surfaceAlt
+                        ? isWin ? theme.fluent.hoverReveal : theme.colors.surfaceAlt
                         : 'transparent',
                   transform: [{translateY: hovered ? -1 : 0}],
                   opacity: pressed ? 0.85 : 1,
+                  ...(isWin && (activeKey === c.key || hovered) ? {
+                    borderWidth: StyleSheet.hairlineWidth,
+                    borderColor: theme.fluent.glassBorderSubtle,
+                  } : {}),
                 },
               ];
             }}>
@@ -344,8 +386,8 @@ function ConversationList({
           style={[
             styles.emptyState,
             {
-              backgroundColor: theme.colors.surface,
-              borderColor: theme.colors.border,
+              backgroundColor: theme.platform === 'windows' ? theme.fluent.acrylicCard : theme.colors.surface,
+              borderColor: theme.platform === 'windows' ? theme.fluent.glassBorderSubtle : theme.colors.border,
             },
           ]}>
           <Text style={{color: theme.colors.text, fontFamily: theme.fontFamily, fontWeight: '700'}}>
@@ -377,7 +419,14 @@ function ActiveChat({
   const messages = useMessagesStore(s => s.byPeer[conversationKey] ?? []);
   const removeMessage = useMessagesStore(s => s.removeMessage);
   const visibleMessages = useMemo(
-    () => messages.filter(m => m.payload.kind !== 'poll_vote' && m.payload.kind !== 'peer_profile'),
+    () =>
+      messages.filter(
+        m =>
+          m.payload.kind !== 'poll_vote' &&
+          m.payload.kind !== 'peer_profile' &&
+          m.payload.kind !== 'file_transfer_chunk' &&
+          m.payload.kind !== 'file_transfer_complete',
+      ),
     [messages],
   );
 
@@ -410,6 +459,23 @@ function ActiveChat({
     }
   };
 
+  const onSendFile = async (
+    fileBytes: Uint8Array,
+    fileName: string,
+    mimeType: string,
+    attachmentType: 'image' | 'video' | 'document',
+  ) => {
+    const mesh = maybeMesh();
+    if (!mesh) return;
+    const toPeerId = conversationKey === BROADCAST_KEY ? ZERO_PEER : conversationKey;
+    try {
+      await mesh.sendFile(toPeerId, fileBytes, fileName, mimeType, attachmentType);
+    } catch (e) {
+      const {Alert} = require('react-native');
+      Alert.alert('Transfer failed', e instanceof Error ? e.message : String(e));
+    }
+  };
+
   const onReact = (messageId: string, emoji: string) => {
     onSendPayload({kind: 'reaction', messageId, emoji});
   };
@@ -424,7 +490,17 @@ function ActiveChat({
 
   return (
     <View style={{flex: 1, backgroundColor: theme.colors.bg}}>
-      <View style={[styles.chatHeader, {borderBottomColor: theme.colors.border}]}>
+      <View
+        style={[
+          styles.chatHeader,
+          {
+            borderBottomColor: theme.colors.border,
+            ...(theme.platform === 'windows' ? {
+              backgroundColor: theme.fluent.acrylicHeader,
+              borderBottomColor: theme.fluent.glassBorderSubtle,
+            } : {}),
+          },
+        ]}>
         {onBack ? (
           <Pressable
             accessibilityLabel="Back to conversations"
@@ -471,14 +547,21 @@ function ActiveChat({
           style={(state: {pressed?: boolean; hovered?: boolean}) => {
             const hovered = !!state.hovered;
             const pressed = !!state.pressed;
+            const isWin = theme.platform === 'windows';
             return {
               marginLeft: 8,
               paddingHorizontal: 10,
               paddingVertical: 6,
               borderRadius: 8,
-              backgroundColor: hovered ? theme.colors.surfaceAlt : theme.colors.accentSoft,
+              backgroundColor: hovered
+                ? isWin ? theme.fluent.hoverReveal : theme.colors.surfaceAlt
+                : isWin ? theme.fluent.acrylicCard : theme.colors.accentSoft,
               opacity: pressed ? 0.8 : 1,
-              ...(Platform.OS === 'windows' ? {cursor: 'pointer' as never} : {}),
+              ...(isWin ? {
+                cursor: 'pointer' as never,
+                borderWidth: StyleSheet.hairlineWidth,
+                borderColor: hovered ? theme.fluent.glassBorderSubtle : 'transparent',
+              } : {}),
             };
           }}>
           <Text style={{color: theme.colors.text, fontFamily: theme.fontFamily, fontSize: 13, fontWeight: '600'}}>
@@ -516,6 +599,7 @@ function ActiveChat({
       <ChatComposer
         onSend={onSend}
         onSendPayload={onSendPayload}
+        onSendFile={onSendFile}
         onOpenPoll={() => setPollOpen(true)}
       />
       <PollBuilderOverlay
@@ -531,9 +615,12 @@ const styles = StyleSheet.create({
   row: {flex: 1, flexDirection: 'row'},
   list: {},
   resizeCol: {
-    width: 4,
+    width: 12,
+    marginHorizontal: -6,
     alignSelf: 'stretch',
-    opacity: 0.55,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 99,
   },
   activePane: {flex: 1},
   convoRowOuter: {

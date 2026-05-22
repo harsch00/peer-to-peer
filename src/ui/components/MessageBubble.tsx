@@ -1,13 +1,15 @@
 /**
  * Message bubble — Fluent (Windows) and M3 "Expressive" (Android) styled.
+ * Windows bubbles use frosted acrylic glass backgrounds for Fluent Design depth.
  */
-import React, {useCallback, useMemo} from 'react';
-import {Alert, Image, Platform, Pressable, StyleSheet, Text, View} from 'react-native';
+import React, {useCallback, useMemo, useState} from 'react';
+import {Alert, Image, Platform, Pressable, StyleSheet, Text, View, Modal, Share} from 'react-native';
 import Animated, {useAnimatedStyle, useSharedValue, withSpring} from 'react-native-reanimated';
 import {useTheme} from '../theme/ThemeProvider';
 import {PathTraceChip} from './PathTraceChip';
 import type {ChatMessage} from '../../core/mesh/meshNode';
 import {normalizeLocalFileUri} from '../../utils/fileUri';
+import {useFileTransferStore} from '../../state/fileTransferStore';
 
 interface Props {
   message: ChatMessage;
@@ -18,6 +20,12 @@ interface Props {
   myPeerId?: string;
   /** Windows: sent bubbles use accent fill — poll choices need a contrasting selected state. */
   pollOnAccentBubble?: boolean;
+}
+
+function humanSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 export function MessageBubble({
@@ -65,7 +73,13 @@ export function MessageBubble({
     );
   }, [message.id, onDelete, pulseBubble]);
 
-  const bubbleColor = isMe ? theme.colors.accent : theme.colors.surfaceAlt;
+  const bubbleColor = isMe
+    ? theme.platform === 'windows'
+      ? theme.fluent.acrylicBubbleSent
+      : theme.colors.accent
+    : theme.platform === 'windows'
+      ? theme.fluent.acrylicBubbleReceived
+      : theme.colors.surfaceAlt;
   const textColor = isMe ? (theme.platform === 'windows' ? '#fff' : theme.m3.onPrimary) : theme.colors.text;
   const mutedOnBubble = isMe ? 'rgba(255,255,255,0.75)' : theme.colors.textMuted;
 
@@ -106,7 +120,17 @@ export function MessageBubble({
     <Animated.View style={[{alignItems: isMe ? 'flex-end' : 'flex-start', marginVertical: 4}, animatedStyle]}>
       <View {...(winBubbleWrapper as object)} style={{maxWidth: 480, alignSelf: isMe ? 'flex-end' : 'flex-start'}}>
         <Pressable onLongPress={onDelete ? openMessageActions : undefined} delayLongPress={380}>
-          <View style={[styles.bubble, radii, {backgroundColor: bubbleColor}]}>
+          <View style={[
+            styles.bubble,
+            radii,
+            {
+              backgroundColor: bubbleColor,
+              ...(theme.platform === 'windows' ? {
+                borderWidth: StyleSheet.hairlineWidth,
+                borderColor: isMe ? 'rgba(255,255,255,0.18)' : theme.colors.border,
+              } : {}),
+            },
+          ]}>
             {Platform.OS === 'windows' && onDelete ? (
               <Pressable
                 onPress={openMessageActions}
@@ -128,7 +152,7 @@ export function MessageBubble({
               mutedColor={mutedOnBubble}
               onPollVote={onPollVote}
               myPeerId={myPeerId}
-              pollOnAccentBubble={!!pollOnAccentBubble}
+              pollOnAccentBubble={isMe && theme.platform === 'windows'}
             />
             {reactionSummary.length > 0 ? (
               <View style={[styles.reactionStrip, {justifyContent: isMe ? 'flex-end' : 'flex-start'}]}>
@@ -198,6 +222,7 @@ function MessageContent({
   pollOnAccentBubble?: boolean;
 }) {
   const theme = useTheme();
+  const [viewerOpen, setViewerOpen] = useState(false);
   const base = {
     color,
     fontFamily: theme.fontFamily,
@@ -205,6 +230,18 @@ function MessageContent({
     lineHeight: 20,
   };
   const payload = message.payload;
+  if (payload.kind === 'file_transfer_header') {
+    return (
+      <FileTransferProgress
+        transferId={payload.transferId}
+        fileName={payload.fileName}
+        fileSize={payload.fileSize}
+        attachmentType={payload.attachmentType}
+        color={color}
+        mutedColor={mutedColor}
+      />
+    );
+  }
   if (payload.kind === 'poll') {
     const votes = message.pollVotes ?? {};
     const counts: Record<string, number> = {};
@@ -220,6 +257,14 @@ function MessageContent({
           const count = counts[option.id] ?? 0;
           const selected = myVote === option.id;
           const winContrast = !!(selected && pollOnAccentBubble);
+          const optTextColor =
+            theme.platform === 'windows' && selected && !pollOnAccentBubble
+              ? theme.scheme === 'dark'
+                ? '#111111'
+                : '#ffffff'
+              : winContrast
+                ? theme.colors.accent
+                : color;
           return (
             <Pressable
               key={option.id}
@@ -259,7 +304,7 @@ function MessageContent({
                   {
                     flex: 1,
                     marginRight: 8,
-                    color: winContrast ? theme.colors.accent : color,
+                    color: optTextColor,
                     fontWeight: selected ? '600' : '400',
                   },
                 ]}>
@@ -273,13 +318,19 @@ function MessageContent({
                     paddingHorizontal: 8,
                     paddingVertical: 2,
                     borderRadius: 999,
-                    backgroundColor: winContrast ? 'rgba(0,0,0,0.08)' : theme.colors.surfaceAlt,
+                    backgroundColor: winContrast
+                      ? 'rgba(0,0,0,0.08)'
+                      : selected && theme.platform === 'windows'
+                        ? theme.scheme === 'dark'
+                          ? 'rgba(0,0,0,0.12)'
+                          : 'rgba(255,255,255,0.25)'
+                        : theme.colors.surfaceAlt,
                   }}>
                   <Text
                     style={{
                       fontFamily: theme.fontFamilyMono,
                       fontSize: 13,
-                      color: winContrast ? theme.colors.accent : color,
+                      color: optTextColor,
                       fontWeight: '600',
                     }}>
                     {count}
@@ -301,30 +352,129 @@ function MessageContent({
           : '';
     const resolvedUri = inlineDataUri || (payload.uri ? normalizeLocalFileUri(payload.uri) : '');
     const showImage = payload.attachmentType === 'image' && !!resolvedUri;
+    const isDoc = (payload.attachmentType === 'document' || payload.attachmentType === 'video') && !!resolvedUri;
+
     return (
       <View>
         {showImage ? (
-          <Image
-            source={{uri: resolvedUri}}
-            style={{width: 220, height: 160, borderRadius: 8, marginBottom: 6, backgroundColor: theme.colors.surface}}
-            resizeMode="cover"
-          />
+          <>
+            <Pressable onPress={() => setViewerOpen(true)}>
+              <Image
+                source={{uri: resolvedUri}}
+                style={{width: 220, height: 160, borderRadius: 8, marginBottom: 6, backgroundColor: theme.colors.surface}}
+                resizeMode="cover"
+              />
+            </Pressable>
+            <Modal
+              visible={viewerOpen}
+              transparent={true}
+              onRequestClose={() => setViewerOpen(false)}
+              onShow={() => {}}
+              onDismiss={() => {}}>
+              <View style={styles.viewerBackdrop}>
+                <Pressable style={styles.viewerClose} onPress={() => setViewerOpen(false)}>
+                  <Text style={styles.viewerCloseText}>✕ Close</Text>
+                </Pressable>
+                <Image source={{uri: resolvedUri}} style={styles.viewerImage} resizeMode="contain" />
+              </View>
+            </Modal>
+          </>
         ) : null}
         <Text style={[base, {fontWeight: '700'}]}>
           {payload.attachmentType.toUpperCase()} · {payload.name}
         </Text>
         {!showImage ? (
           <Text style={base}>
-            {payload.mimeType ?? 'file'}{payload.sizeBytes ? ` · ${payload.sizeBytes} bytes` : ''}
+            {payload.mimeType ?? 'file'}{payload.sizeBytes ? ` · ${humanSize(payload.sizeBytes)}` : ''}
           </Text>
         ) : null}
-        {!showImage && payload.dataBase64 ? (
+        {isDoc ? (
+          <Pressable
+            style={[styles.saveBtn, {backgroundColor: theme.colors.surfaceAlt}]}
+            onPress={() => Share.share({url: resolvedUri, message: payload.name}).catch(() => {})}>
+            <Text style={{color: theme.colors.text, fontSize: 13, fontWeight: '500'}}>Save / Share</Text>
+          </Pressable>
+        ) : null}
+        {!showImage && payload.dataBase64 && !isDoc ? (
           <Text style={[base, {fontSize: 12, color: mutedColor}]}>Inline file data received</Text>
         ) : null}
       </View>
     );
   }
   return <Text style={base}>{message.body}</Text>;
+}
+
+function FileTransferProgress({
+  transferId,
+  fileName,
+  fileSize,
+  attachmentType,
+  color,
+  mutedColor,
+}: {
+  transferId: string;
+  fileName: string;
+  fileSize: number;
+  attachmentType: string;
+  color: string;
+  mutedColor: string;
+}) {
+  const theme = useTheme();
+  const transfer = useFileTransferStore(s => s.transfers[transferId]);
+  const progress = transfer?.progress ?? 0;
+  const status = transfer?.status ?? 'in_progress';
+  const sizeLabel =
+    fileSize < 1024
+      ? `${fileSize} B`
+      : fileSize < 1024 * 1024
+        ? `${(fileSize / 1024).toFixed(1)} KB`
+        : `${(fileSize / (1024 * 1024)).toFixed(1)} MB`;
+
+  return (
+    <View style={{gap: 6, minWidth: 180}}>
+      <Text
+        style={{
+          color,
+          fontFamily: theme.fontFamily,
+          fontSize: 14,
+          fontWeight: '700',
+        }}>
+        {attachmentType.toUpperCase()} · {fileName}
+      </Text>
+      <View
+        style={[
+          styles.ftProgressTrack,
+          {backgroundColor: theme.colors.surfaceAlt},
+        ]}>
+        <View
+          style={[
+            styles.ftProgressFill,
+            {
+              backgroundColor:
+                status === 'failed'
+                  ? theme.colors.danger
+                  : status === 'completed'
+                    ? theme.colors.success
+                    : theme.colors.accent,
+              width: `${Math.round(progress * 100)}%` as any,
+            },
+          ]}
+        />
+      </View>
+      <Text
+        style={{
+          color: mutedColor,
+          fontFamily: theme.fontFamilyMono,
+          fontSize: 11,
+        }}>
+        {status === 'completed'
+          ? `✓ ${transfer?.direction === 'outbound' ? 'Sent' : 'Received'} · ${sizeLabel}`
+          : status === 'failed'
+            ? `✕ Transfer failed`
+            : `${transfer?.direction === 'outbound' ? 'Sending' : 'Receiving'}… ${Math.round(progress * 100)}% · ${sizeLabel}`}
+      </Text>
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
@@ -375,5 +525,46 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 8,
+  },
+  ftProgressTrack: {
+    height: 6,
+    borderRadius: 3,
+    overflow: 'hidden',
+    marginTop: 4,
+  },
+  ftProgressFill: {
+    height: '100%',
+    borderRadius: 3,
+  },
+  viewerBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  viewerClose: {
+    position: 'absolute',
+    top: 40,
+    right: 24,
+    padding: 12,
+    zIndex: 10,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: 8,
+  },
+  viewerCloseText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 16,
+  },
+  viewerImage: {
+    width: '100%',
+    height: '100%',
+  },
+  saveBtn: {
+    marginTop: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
   },
 });

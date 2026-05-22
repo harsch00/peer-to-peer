@@ -7,9 +7,9 @@
  * tokens that compose on top of those translucent surfaces.
  */
 export const FluentTokens = {
-  fontFamily: 'Segoe UI Variable',
-  fontFamilyDisplay: 'Segoe UI Variable Display',
-  fontFamilyMono: 'Cascadia Mono, Consolas, monospace',
+  fontFamily: undefined,
+  fontFamilyDisplay: undefined,
+  fontFamilyMono: undefined,
 
   // Light theme tokens (the system can flip to dark via useColorScheme()).
   light: {
@@ -26,6 +26,15 @@ export const FluentTokens = {
     chip: 'rgba(15, 108, 189, 0.10)',
     danger: '#C42B1C',
     success: '#0F7B0F',
+    // Acrylic surface tokens
+    acrylicBubbleSent: 'rgba(15, 108, 189, 0.9)',
+    acrylicBubbleReceived: 'rgba(255, 255, 255, 0.9)',
+    acrylicCard: 'rgba(255, 255, 255, 0.8)',
+    acrylicOverlay: 'rgba(255, 255, 255, 0.82)',
+    acrylicHeader: 'rgba(248, 248, 248, 0.7)',
+    glassBorder: 'rgba(255, 255, 255, 0.35)',
+    glassBorderSubtle: 'rgba(0, 0, 0, 0.06)',
+    hoverReveal: 'rgba(0, 0, 0, 0.04)',
   },
 
   dark: {
@@ -42,6 +51,15 @@ export const FluentTokens = {
     chip: 'rgba(96, 205, 255, 0.16)',
     danger: '#FF99A4',
     success: '#6CCB5F',
+    // Acrylic surface tokens
+    acrylicBubbleSent: 'rgba(0, 90, 158, 0.8)',
+    acrylicBubbleReceived: 'rgba(45, 45, 45, 0.8)',
+    acrylicCard: 'rgba(45, 45, 45, 0.8)',
+    acrylicOverlay: 'rgba(30, 30, 30, 0.82)',
+    acrylicHeader: 'rgba(30, 30, 30, 0.65)',
+    glassBorder: 'rgba(255, 255, 255, 0.12)',
+    glassBorderSubtle: 'rgba(255, 255, 255, 0.06)',
+    hoverReveal: 'rgba(255, 255, 255, 0.05)',
   },
 
   type: {
@@ -66,3 +84,4 @@ export const FluentTokens = {
 } as const;
 
 export type FluentPalette = typeof FluentTokens.light | typeof FluentTokens.dark;
+

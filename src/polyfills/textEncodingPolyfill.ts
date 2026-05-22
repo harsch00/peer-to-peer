@@ -94,13 +94,8 @@ class PolyfillTextDecoder {
   }
 }
 
-if (typeof root.TextEncoder !== 'function') {
-  root.TextEncoder = PolyfillTextEncoder as unknown as Mutable['TextEncoder'];
-}
-
-if (typeof root.TextDecoder !== 'function') {
-  root.TextDecoder = PolyfillTextDecoder as unknown as Mutable['TextDecoder'];
-}
+root.TextEncoder = PolyfillTextEncoder as unknown as Mutable['TextEncoder'];
+root.TextDecoder = PolyfillTextDecoder as unknown as Mutable['TextDecoder'];
 
 if (typeof root.btoa !== 'function') {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';

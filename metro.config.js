@@ -29,6 +29,9 @@ const config = {
       new RegExp(`${rnwPath}/build/.*`),
       new RegExp(`${rnwPath}/target/.*`),
       /.*\.ProjectImports\.zip/,
+      // Exclude Android C++ build output folders from being crawled by Metro
+      /.*[/\\]android[/\\]\.cxx[/\\].*/,
+      /.*[/\\]android[/\\]build[/\\].*/,
     ]),
     //
   },

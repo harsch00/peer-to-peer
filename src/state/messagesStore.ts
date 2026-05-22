@@ -44,7 +44,7 @@ function shouldIncrementChatsUnread(msg: ChatMessage): boolean {
   if (!me || msg.fromPeerId === me) {
     return false;
   }
-  if (msg.payload.kind === 'reaction' || msg.payload.kind === 'poll_vote' || msg.payload.kind === 'peer_profile') {
+  if (msg.payload.kind === 'reaction' || msg.payload.kind === 'poll_vote' || msg.payload.kind === 'peer_profile' || msg.payload.kind === 'file_transfer_chunk' || msg.payload.kind === 'file_transfer_complete') {
     return false;
   }
   const key = conversationKeyForMessage(msg);

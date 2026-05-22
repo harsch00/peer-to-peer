@@ -1,21 +1,28 @@
 /**
  * Composer field with Fluent / M3 styling, attachments, and poll entry (poll UI lives in parent overlay).
  */
-import React, {useCallback, useState} from 'react';
+import React, {useCallback, useRef, useState} from 'react';
 import {Alert, Platform, Pressable, StyleSheet, Text, TextInput, View} from 'react-native';
 import {useTheme} from '../theme/ThemeProvider';
 import type {ChatPayload} from '../../core/protocol/messageEnvelope';
 import {pickAttachment} from '../../utils/pickAttachment';
+import {INLINE_THRESHOLD, MAX_TRANSFER_SIZE} from '../../core/protocol/fileTransfer';
+import {useFileTransferStore} from '../../state/fileTransferStore';
 
 interface Props {
   onSend: (body: string) => Promise<void> | void;
   onSendPayload?: (payload: ChatPayload) => Promise<void> | void;
+  /** Initiate a chunked file transfer for large files. */
+  onSendFile?: (
+    fileBytes: Uint8Array,
+    fileName: string,
+    mimeType: string,
+    attachmentType: 'image' | 'video' | 'document',
+  ) => Promise<void> | void;
   /** Opens the poll sheet (must not use Modal on RN Windows). Parent renders `PollBuilderOverlay`. */
   onOpenPoll?: () => void;
   placeholder?: string;
 }
-
-const MAX_INLINE_ATTACHMENT_BYTES = 180 * 1024;
 
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = '';
@@ -31,25 +38,54 @@ function bytesToBase64(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString('base64');
 }
 
-async function readInlineAttachmentBase64(uri: string): Promise<string | undefined> {
+async function readFileBytes(uri: string): Promise<Uint8Array | undefined> {
   try {
+    if (Platform.OS === 'windows') {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const {NativeModules, TurboModuleRegistry} = require('react-native');
+      const m = NativeModules as {P2PFilePicker?: {readFileBase64Async: (path: string) => Promise<string>}};
+      const picker = m.P2PFilePicker ?? TurboModuleRegistry.get('P2PFilePicker');
+      if (picker && typeof picker.readFileBase64Async === 'function') {
+        const b64 = await picker.readFileBase64Async(uri);
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const {Buffer} = require('buffer');
+        const buf = Buffer.from(b64, 'base64');
+        return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+      }
+    }
     const res = await fetch(uri);
     if (!res.ok) return undefined;
     const ab = await res.arrayBuffer();
-    const bytes = new Uint8Array(ab);
-    if (bytes.byteLength === 0 || bytes.byteLength > MAX_INLINE_ATTACHMENT_BYTES) {
-      return undefined;
-    }
-    return bytesToBase64(bytes);
+    return new Uint8Array(ab);
   } catch {
     return undefined;
   }
 }
 
-export function ChatComposer({onSend, onSendPayload, onOpenPoll, placeholder = 'Type a message…'}: Props) {
+function humanSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+export function ChatComposer({
+  onSend,
+  onSendPayload,
+  onSendFile,
+  onOpenPoll,
+  placeholder = 'Type a message…',
+}: Props) {
   const theme = useTheme();
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
+  const transfers = useFileTransferStore(s => s.transfers);
+
+  // Find any active outbound transfer
+  const activeOutbound = Object.values(transfers).find(
+    t => t.direction === 'outbound' && t.status === 'in_progress',
+  );
+
+  const lastWasEnterRef = useRef(false);
 
   const submit = useCallback(async () => {
     const body = text.trim();
@@ -62,6 +98,26 @@ export function ChatComposer({onSend, onSendPayload, onOpenPoll, placeholder = '
       setSending(false);
     }
   }, [text, sending, onSend]);
+
+  const handleKeyDown = useCallback((e: any) => {
+    const key = e.nativeEvent?.key;
+    const shift = !!e.nativeEvent?.shiftKey;
+    if (key === 'Enter' && !shift) {
+      lastWasEnterRef.current = true;
+      e.preventDefault?.();
+      submit();
+    } else {
+      lastWasEnterRef.current = false;
+    }
+  }, [submit]);
+
+  const handleTextChange = useCallback((newText: string) => {
+    if (Platform.OS === 'windows' && lastWasEnterRef.current) {
+      lastWasEnterRef.current = false;
+      return;
+    }
+    setText(newText);
+  }, []);
 
   const sendPayload = useCallback(
     async (payload: ChatPayload) => {
@@ -82,62 +138,119 @@ export function ChatComposer({onSend, onSendPayload, onOpenPoll, placeholder = '
       try {
         const file = await pickAttachment(kind);
         if (!file) return;
-        const dataBase64 = await readInlineAttachmentBase64(file.uri);
-        if (!dataBase64) {
+        const fileBytes = await readFileBytes(file.uri);
+        if (!fileBytes || fileBytes.byteLength === 0) {
+          Alert.alert('Attachment', 'Could not read the selected file.');
+          return;
+        }
+
+        // Check max transfer size
+        if (fileBytes.byteLength > MAX_TRANSFER_SIZE) {
           Alert.alert(
-            'Attachment is large',
-            'This file exceeds inline mesh limits; sending metadata only. Pick smaller media for reliable cross-device transfer.',
+            'File too large',
+            `Maximum file size is ${humanSize(MAX_TRANSFER_SIZE)}. This file is ${humanSize(fileBytes.byteLength)}.`,
+          );
+          return;
+        }
+
+        // Small files: send inline (fast path)
+        if (fileBytes.byteLength <= INLINE_THRESHOLD) {
+          const dataBase64 = bytesToBase64(fileBytes);
+          await sendPayload({
+            kind: 'attachment',
+            attachmentType: kind === 'document' ? 'document' : kind,
+            name: file.name,
+            uri: file.uri,
+            dataBase64,
+            sizeBytes: file.sizeBytes,
+            mimeType: file.mimeType,
+          });
+          return;
+        }
+
+        // Large files: chunked transfer via BLE / Wi-Fi Direct
+        if (onSendFile) {
+          await onSendFile(
+            fileBytes,
+            file.name,
+            file.mimeType ?? 'application/octet-stream',
+            kind === 'document' ? 'document' : kind,
+          );
+        } else {
+          // Fallback: send metadata only if mesh sendFile not wired
+          Alert.alert(
+            'Large file',
+            `This file is ${humanSize(fileBytes.byteLength)}. Chunked transfer is not available for this conversation.`,
           );
         }
-        await sendPayload({
-          kind: 'attachment',
-          attachmentType: kind === 'document' ? 'document' : kind,
-          name: file.name,
-          uri: file.uri,
-          dataBase64,
-          sizeBytes: file.sizeBytes,
-          mimeType: file.mimeType,
-        });
       } catch (e) {
         Alert.alert('Attachment', e instanceof Error ? e.message : 'Could not read file');
       }
     },
-    [onSendPayload, sending, sendPayload],
+    [onSendPayload, sending, sendPayload, onSendFile],
   );
 
   return (
     <View style={{backgroundColor: theme.colors.surface, borderTopColor: theme.colors.border, borderTopWidth: 0.5}}>
+      {activeOutbound ? (
+        <View style={styles.transferBar}>
+          <View style={{flex: 1, gap: 2}}>
+            <Text style={{color: theme.colors.text, fontFamily: theme.fontFamily, fontSize: 12, fontWeight: '600'}}>
+              Sending {activeOutbound.fileName}… {Math.round(activeOutbound.progress * 100)}%
+            </Text>
+            <View
+              style={[
+                styles.progressTrack,
+                {backgroundColor: theme.colors.surfaceAlt},
+              ]}>
+              <View
+                style={[
+                  styles.progressFill,
+                  {
+                    backgroundColor: theme.colors.accent,
+                    width: `${Math.round(activeOutbound.progress * 100)}%` as any,
+                  },
+                ]}
+              />
+            </View>
+            <Text style={{color: theme.colors.textMuted, fontFamily: theme.fontFamilyMono, fontSize: 10}}>
+              {activeOutbound.receivedChunks}/{activeOutbound.totalChunks} chunks · {humanSize(activeOutbound.fileSize)}
+            </Text>
+          </View>
+        </View>
+      ) : null}
       <View style={styles.actions}>
         <Action
           label="Image"
-          disabled={!onSendPayload || sending}
+          disabled={!onSendPayload || sending || !!activeOutbound}
           onPress={() => browseAndSend('image')}
         />
         <Action
           label="Video"
-          disabled={!onSendPayload || sending}
+          disabled={!onSendPayload || sending || !!activeOutbound}
           onPress={() => browseAndSend('video')}
         />
         <Action
           label="Doc"
-          disabled={!onSendPayload || sending}
+          disabled={!onSendPayload || sending || !!activeOutbound}
           onPress={() => browseAndSend('document')}
         />
         <Action
           label="Poll"
-          disabled={!onSendPayload || sending || !onOpenPoll}
+          disabled={!onSendPayload || sending || !onOpenPoll || !!activeOutbound}
           onPress={() => onOpenPoll?.()}
         />
       </View>
       <View style={styles.row}>
         <TextInput
           value={text}
-          onChangeText={setText}
+          onChangeText={handleTextChange}
+          {...(Platform.OS === 'windows' ? {onKeyDown: handleKeyDown} : {})}
           placeholder={placeholder}
           placeholderTextColor={theme.colors.textMuted}
           multiline
-          onSubmitEditing={submit}
-          blurOnSubmit
+          onSubmitEditing={Platform.OS !== 'windows' ? submit : undefined}
+          blurOnSubmit={Platform.OS !== 'windows'}
           style={[
             styles.input,
             {
@@ -231,4 +344,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  transferBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    gap: 8,
+  },
+  progressTrack: {
+    height: 4,
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: 4,
+    borderRadius: 2,
+  },
 });
+
